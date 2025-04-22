@@ -4,138 +4,165 @@
 <canvas id="gameCanvas" width="800" height="600" tabindex="0"></canvas>
 
 @code {
-	// Dimensões
-	const int width = 800, height = 600;
+    // Dimensões fixas
+    const int width = 800, height = 600;
 
-	// Bola
-	double ballX = 100, ballY = 100;
-	const int ballR = 15;
-	double vx = 5, vy = -10, gravity = 0.5;
+    // Bola
+    double ballX, ballY;
+    const int ballR = 13;
+    double vx, vy;
+    double gravity = 0.5;       // Gravidade base
 
-	// Paddle
-	const int paddleW = 200, paddleH = 30;
-	double paddleX, paddleY;
-	int moveDir = 0;
-	const int PaddleSpeed = 15;  // ajuste aqui o quanto quiser
+    // Paddle
+    const int paddleW = 230, paddleH = 25;
+    double paddleX, paddleY;
+    const int PaddleSpeed = 20;
+    int moveDir = 0;
 
+    // HUD / Estado
+    int score;
+    DateTime startTime;
+    bool paused;
+    bool isDeath;
+    int lastScore;
+    string sessionId;
 
-	// HUD
-	int score = 0;
-	DateTime startTime;
-	bool paused = false;
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            InitializeGame();
 
-	protected override async Task OnAfterRenderAsync(bool firstRender)
-	{
-		if (firstRender)
-		{
-			paddleX = (width - paddleW) / 2;
-			paddleY = height - 100;
-			startTime = DateTime.Now;
+            var objRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("startBreakout", objRef, "gameCanvas");
+            await JS.InvokeVoidAsync("registerKeyHandlers", objRef);
+        }
+    }
 
-			var objRef = DotNetObjectReference.Create(this);
-			await JS.InvokeVoidAsync("startBreakout", objRef, "gameCanvas");
-			await JS.InvokeVoidAsync("registerKeyHandlers", objRef);
-		}
-	}
+    void InitializeGame()
+    {
+        // posição inicial
+        ballX = 100;
+        ballY = 100;
+        vx = 5;
+        vy = -10;
 
-	[JSInvokable]
-	public object UpdateFrame()
-	{
-		if (paused)
-			return new { pause = true };
+        paddleX = (width - paddleW) / 2;
+        paddleY = height - 100;
+        moveDir = 0;
 
-		// ----- movimento paddle -----
-		int step = PaddleSpeed;
+        score = 0;
+        startTime = DateTime.Now;
+        paused = false;
+        isDeath = false;
+        sessionId = Guid.NewGuid().ToString("N").Substring(0, 7);
 
-		if (moveDir == -1 && paddleX > 0) paddleX -= step;
-		if (moveDir == 1 && paddleX + paddleW < width) paddleX += step;
+        // inicializa gravidade
+        gravity = 0.5;
+    }
 
-		// ----- física bola -----
-		vy += gravity;
-		ballX += vx;
-		ballY += vy;
+    [JSInvokable]
+    public object UpdateFrame()
+    {
+        if (paused)
+            return BuildFrame(pause: true);
 
-		if (ballX <= 0 || ballX + ballR * 2 >= width) vx *= -1;
-		if (ballY <= 0) { ballY = 0; vy *= -1; }
-//-------------------------------------------------------------------------------
+        // Ajusta gravidade dinamicamente com base no score
+        const double baseGravity = 0.4;
+        const double perPointIncr = 0.002;
+        const double maxGravity = 1.2;
+        gravity = Math.Min(baseGravity + score * perPointIncr, maxGravity);
 
-		// --- Colisão com paddle (com perda de energia e atrito) -------------
-		if (ballY + ballR * 2 >= paddleY &&
-			ballX + ballR * 2 >= paddleX &&
-			ballX <= paddleX + paddleW && vy > 0)
-		{
-			// ❶ posiciona no topo do paddle
-			ballY = paddleY - ballR * 2;
+        // --- paddle ---
+        if (moveDir == -1 && paddleX > 0) paddleX -= PaddleSpeed;
+        if (moveDir == 1 && paddleX + paddleW < width) paddleX += PaddleSpeed;
 
-			// ❷ ponto de impacto normalizado -1…+1
-			double hitPos = ((ballX + ballR) - (paddleX + paddleW / 2.0))
-							/ (paddleW / 2.0);
+        // --- física bola ---
+        vy += gravity;
+        ballX += vx;
+        ballY += vy;
 
-			// ❸ energia atual (módulo do vetor)
-			double speed = Math.Sqrt(vx * vx + vy * vy);
+        if (ballX <= 0 || ballX + ballR * 2 >= width) vx *= -1;
+        if (ballY <= 0) { ballY = 0; vy *= -1; }
+        if (ballY <= 0) { ballY = 0; vy *= -1; }
 
-			// ❹ perde 10% de energia a cada rebote
-			const double bounceLoss = 1.0;
-			speed *= bounceLoss;
+        // --- colisão paddle sem perda de altura ---
+        if (ballY + ballR * 2 >= paddleY &&
+            ballX + ballR * 2 >= paddleX &&
+            ballX <= paddleX + paddleW && vy > 0)
+        {
+            // posiciona no topo do paddle
+            ballY = paddleY - ballR * 2;
 
-			// ❺ razão máxima para componente horizontal (60% da energia)
-			const double horizontalRatio = 0.6;
-			vx = hitPos * speed * horizontalRatio;
+            // ponto de impacto normalizado (-1 a +1)
+            double hitPos = ((ballX + ballR) - (paddleX + paddleW / 2.0))
+                            / (paddleW / 2.0);
 
-			// ❻ componente vertical para conservar o restante da energia
-			double vyMag = Math.Sqrt(Math.Max(0, speed * speed - vx * vx));
-			vy = -vyMag;  // inverte para cima
+            // magnitude da velocidade atual
+            double speed = Math.Sqrt(vx * vx + vy * vy);
 
-			// ❼ atrito extra no horizontal (suaviza quique diagonal)
-			const double friction = 0.98;
-			vx *= friction;
+            // sem perda de energia: lossFactor = 1.0
+            speed *= 1.0;
 
-			// ❽ garante componente vertical mínima (evita quique quase reto)
-			if (Math.Abs(vy) < 1)
-				vy = -1;
+            // componente horizontal proporcional ao impacto
+            vx = hitPos * speed;
 
-			score++;  // pontua ao defender
-		}
+            // componente vertical conserva a energia restante
+            double vyMag = Math.Sqrt(Math.Max(0, speed * speed - vx * vx));
+            vy = -vyMag;
 
+            score++;
+        }
 
+        // --- chão / game over ---
+        if (ballY + ballR * 2 >= height - 2)
+        {
+            ballY = height - ballR * 2 - 2;
+            paused = true;
+            isDeath = true;
+            lastScore = score;
+            return BuildFrame(pause: true);
+        }
 
-//----------------------------------------------------------------
-		// Encostou no chão? pausa  +  zera HUD
-		// chão → pausa + zera
-		if (ballY + ballR * 2 >= height - 2)
-		{
-			ballY = height - ballR * 2 - 2;
-			score = 0;                    // <── zera
-			startTime = DateTime.Now;         // <── zera cronômetro
-			paused = true;
-			return Frame(pause: true);
-		}
+        return BuildFrame(pause: false);
+    }
 
+    object BuildFrame(bool pause) => new
+    {
+        ballX,
+        ballY,
+        ballR,
+        paddleX,
+        paddleY,
+        paddleW,
+        paddleH,
+        score,
+        elapsed = (int)(DateTime.Now - startTime).TotalSeconds,
+        pause,
+        isDeath,
+        lastScore,
+        sessionId
+    };
 
-		return Frame(pause: false);
-	}
+    [JSInvokable]
+    public void KeyDown(int dir) => moveDir = dir;
 
-	object Frame(bool pause) => new
-	{
-		ballX,
-		ballY,
-		ballR,
-		paddleX,
-		paddleY,
-		paddleW,
-		paddleH,
-		score,
-		elapsed = (int)(DateTime.Now - startTime).TotalSeconds,
-		pause
-	};
+    [JSInvokable]
+    public void KeyUp(int dir)
+    {
+        if (moveDir == dir) moveDir = 0;
+    }
 
-	[JSInvokable]
-	public void Resume()
-	{
-		vy *= -1;          // rebate
-		paused = false;
-	}
+    [JSInvokable]
+    public void TogglePause()
+    {
+        if (!isDeath)
+            paused = !paused;
+    }
 
-	[JSInvokable] public void KeyDown(int dir) => moveDir = dir;
-	[JSInvokable] public void KeyUp(int dir) { if (moveDir == dir) moveDir = 0; }
+    [JSInvokable]
+    public void ResetGame()
+    {
+        InitializeGame();
+    }
 }

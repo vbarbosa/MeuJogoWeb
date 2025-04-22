@@ -16,6 +16,8 @@
 	const int paddleW = 200, paddleH = 30;
 	double paddleX, paddleY;
 	int moveDir = 0;
+	const int PaddleSpeed = 15;  // ajuste aqui o quanto quiser
+
 
 	// HUD
 	int score = 0;
@@ -43,7 +45,8 @@
 			return new { pause = true };
 
 		// ----- movimento paddle -----
-		int step = 10;
+		int step = PaddleSpeed;
+
 		if (moveDir == -1 && paddleX > 0) paddleX -= step;
 		if (moveDir == 1 && paddleX + paddleW < width) paddleX += step;
 

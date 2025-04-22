@@ -2,6 +2,7 @@
     const canvas = document.getElementById(canvasId);
     const ctx = canvas.getContext('2d');
 
+
     let paused = false;   // loop travado
     let waitingAck = false;   // aguardando clique / space para retomar
 

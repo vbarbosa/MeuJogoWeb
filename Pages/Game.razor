@@ -4,103 +4,135 @@
 <canvas id="gameCanvas" width="800" height="600" tabindex="0"></canvas>
 
 @code {
-    // Dimensões
-    const int width = 800, height = 600;
+	// Dimensões
+	const int width = 800, height = 600;
 
-    // Bola
-    double ballX = 100, ballY = 100;
-    const int ballR = 15;
-    double vx = 5, vy = -10, gravity = 0.5;
+	// Bola
+	double ballX = 100, ballY = 100;
+	const int ballR = 15;
+	double vx = 5, vy = -10, gravity = 0.5;
 
-    // Paddle
-    const int paddleW = 200, paddleH = 30;
-    double paddleX, paddleY;
-    int moveDir = 0;
+	// Paddle
+	const int paddleW = 200, paddleH = 30;
+	double paddleX, paddleY;
+	int moveDir = 0;
 
-    // HUD
-    int score = 0;
-    DateTime startTime;
-    bool paused = false;
+	// HUD
+	int score = 0;
+	DateTime startTime;
+	bool paused = false;
 
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (firstRender)
-        {
-            paddleX = (width - paddleW) / 2;
-            paddleY = height - 100;
-            startTime = DateTime.Now;
+	protected override async Task OnAfterRenderAsync(bool firstRender)
+	{
+		if (firstRender)
+		{
+			paddleX = (width - paddleW) / 2;
+			paddleY = height - 100;
+			startTime = DateTime.Now;
 
-            var objRef = DotNetObjectReference.Create(this);
-            await JS.InvokeVoidAsync("startBreakout", objRef, "gameCanvas");
-            await JS.InvokeVoidAsync("registerKeyHandlers", objRef);
-        }
-    }
+			var objRef = DotNetObjectReference.Create(this);
+			await JS.InvokeVoidAsync("startBreakout", objRef, "gameCanvas");
+			await JS.InvokeVoidAsync("registerKeyHandlers", objRef);
+		}
+	}
 
-    [JSInvokable]
-    public object UpdateFrame()
-    {
-        if (paused)
-            return new { pause = true };
+	[JSInvokable]
+	public object UpdateFrame()
+	{
+		if (paused)
+			return new { pause = true };
 
-        // ----- movimento paddle -----
-        int step = 10;
-        if (moveDir == -1 && paddleX > 0) paddleX -= step;
-        if (moveDir == 1 && paddleX + paddleW < width) paddleX += step;
+		// ----- movimento paddle -----
+		int step = 10;
+		if (moveDir == -1 && paddleX > 0) paddleX -= step;
+		if (moveDir == 1 && paddleX + paddleW < width) paddleX += step;
 
-        // ----- física bola -----
-        vy += gravity;
-        ballX += vx;
-        ballY += vy;
+		// ----- física bola -----
+		vy += gravity;
+		ballX += vx;
+		ballY += vy;
 
-        if (ballX <= 0 || ballX + ballR * 2 >= width) vx *= -1;
-        if (ballY <= 0) { ballY = 0; vy *= -1; }
+		if (ballX <= 0 || ballX + ballR * 2 >= width) vx *= -1;
+		if (ballY <= 0) { ballY = 0; vy *= -1; }
+//-------------------------------------------------------------------------------
 
-        // Colisão paddle → score++
-        if (ballY + ballR * 2 >= paddleY &&
-            ballX + ballR * 2 >= paddleX &&
-            ballX <= paddleX + paddleW && vy > 0)
-        {
-            ballY = paddleY - ballR * 2;
-            vy *= -1;
-            score++; // 1 ponto por defesa
-        }
+		// --- Colisão com paddle (com perda de energia e atrito) -------------
+		if (ballY + ballR * 2 >= paddleY &&
+			ballX + ballR * 2 >= paddleX &&
+			ballX <= paddleX + paddleW && vy > 0)
+		{
+			// ❶ posiciona no topo do paddle
+			ballY = paddleY - ballR * 2;
 
-        // Encostou no chão? pausa  +  zera HUD
-        // chão → pausa + zera
-        if (ballY + ballR * 2 >= height - 2)
-        {
-            ballY = height - ballR * 2 - 2;
-            score = 0;                    // <── zera
-            startTime = DateTime.Now;         // <── zera cronômetro
-            paused = true;
-            return Frame(pause: true);
-        }
+			// ❷ ponto de impacto normalizado -1…+1
+			double hitPos = ((ballX + ballR) - (paddleX + paddleW / 2.0))
+							/ (paddleW / 2.0);
+
+			// ❸ energia atual (módulo do vetor)
+			double speed = Math.Sqrt(vx * vx + vy * vy);
+
+			// ❹ perde 10% de energia a cada rebote
+			const double bounceLoss = 1.0;
+			speed *= bounceLoss;
+
+			// ❺ razão máxima para componente horizontal (60% da energia)
+			const double horizontalRatio = 0.6;
+			vx = hitPos * speed * horizontalRatio;
+
+			// ❻ componente vertical para conservar o restante da energia
+			double vyMag = Math.Sqrt(Math.Max(0, speed * speed - vx * vx));
+			vy = -vyMag;  // inverte para cima
+
+			// ❼ atrito extra no horizontal (suaviza quique diagonal)
+			const double friction = 0.98;
+			vx *= friction;
+
+			// ❽ garante componente vertical mínima (evita quique quase reto)
+			if (Math.Abs(vy) < 1)
+				vy = -1;
+
+			score++;  // pontua ao defender
+		}
 
 
-        return Frame(pause: false);
-    }
 
-    object Frame(bool pause) => new
-    {
-        ballX,
-        ballY,
-        ballR,
-        paddleX,
-        paddleY,
-        paddleW,
-        paddleH,
-        score,
-        elapsed = (int)(DateTime.Now - startTime).TotalSeconds,
-        pause
-    };
+//----------------------------------------------------------------
+		// Encostou no chão? pausa  +  zera HUD
+		// chão → pausa + zera
+		if (ballY + ballR * 2 >= height - 2)
+		{
+			ballY = height - ballR * 2 - 2;
+			score = 0;                    // <── zera
+			startTime = DateTime.Now;         // <── zera cronômetro
+			paused = true;
+			return Frame(pause: true);
+		}
 
-    [JSInvokable]
-    public void Resume()
-    {
-        vy *= -1;          // rebate
-        paused = false;
-    }
 
-    [JSInvokable] public void KeyDown(int dir) => moveDir = dir;
-    [JSInvokable] public void KeyUp(int dir) { if (moveDir == dir) moveDir = 0; }
+		return Frame(pause: false);
+	}
+
+	object Frame(bool pause) => new
+	{
+		ballX,
+		ballY,
+		ballR,
+		paddleX,
+		paddleY,
+		paddleW,
+		paddleH,
+		score,
+		elapsed = (int)(DateTime.Now - startTime).TotalSeconds,
+		pause
+	};
+
+	[JSInvokable]
+	public void Resume()
+	{
+		vy *= -1;          // rebate
+		paused = false;
+	}
+
+	[JSInvokable] public void KeyDown(int dir) => moveDir = dir;
+	[JSInvokable] public void KeyUp(int dir) { if (moveDir == dir) moveDir = 0; }
 }

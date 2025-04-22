@@ -16,7 +16,7 @@
     // Paddle
     const int paddleW = 230, paddleH = 25;
     double paddleX, paddleY;
-    const int PaddleSpeed = 20;
+    const int PaddleSpeed = 25;
     int moveDir = 0;
 
     // HUD / Estado
@@ -68,14 +68,15 @@
             return BuildFrame(pause: true);
 
         // Ajusta gravidade dinamicamente com base no score
-        const double baseGravity = 0.4;
-        const double perPointIncr = 0.002;
-        const double maxGravity = 1.2;
+        const double baseGravity = 0.5;
+        const double perPointIncr = 0.001;
+        const double maxGravity = 1.0;
         gravity = Math.Min(baseGravity + score * perPointIncr, maxGravity);
 
         // --- paddle ---
-        if (moveDir == -1 && paddleX > 0) paddleX -= PaddleSpeed;
-        if (moveDir == 1 && paddleX + paddleW < width) paddleX += PaddleSpeed;
+        double paddleVel = 0;
+        if (moveDir == -1 && paddleX > 0) { paddleX -= PaddleSpeed; paddleVel = -PaddleSpeed; }
+        if (moveDir == 1 && paddleX + paddleW < width) { paddleX += PaddleSpeed; paddleVel = PaddleSpeed; }
 
         // --- física bola ---
         vy += gravity;
@@ -84,32 +85,41 @@
 
         if (ballX <= 0 || ballX + ballR * 2 >= width) vx *= -1;
         if (ballY <= 0) { ballY = 0; vy *= -1; }
-        if (ballY <= 0) { ballY = 0; vy *= -1; }
 
-        // --- colisão paddle sem perda de altura ---
+        // --- colisão paddle com física correta ---
         if (ballY + ballR * 2 >= paddleY &&
             ballX + ballR * 2 >= paddleX &&
             ballX <= paddleX + paddleW && vy > 0)
         {
-            // posiciona no topo do paddle
-            ballY = paddleY - ballR * 2;
-
-            // ponto de impacto normalizado (-1 a +1)
+            // normaliza ponto de impacto (-1 a +1)
             double hitPos = ((ballX + ballR) - (paddleX + paddleW / 2.0))
                             / (paddleW / 2.0);
 
-            // magnitude da velocidade atual
+            // magnitude da velocidade antes do impacto
             double speed = Math.Sqrt(vx * vx + vy * vy);
 
-            // sem perda de energia: lossFactor = 1.0
-            speed *= 1.0;
+            // parâmetros físicos
+            const double restitution = 1.0;  // sem perda de energia vertical
+            const double friction = 0.1;     // atrito entre paddle e bola
 
-            // componente horizontal proporcional ao impacto
-            vx = hitPos * speed;
+            // componente horizontal desejada pelo impacto
+            double impactVx = hitPos * speed;
 
-            // componente vertical conserva a energia restante
+            // velocidade relativa no eixo X (impacto vs paddle)
+            double relVx = impactVx - paddleVel;
+
+            // aplica atrito na relativa
+            relVx *= (1 - friction);
+
+            // reconstrói velocidade absoluta adicionando a do paddle
+            vx = relVx + paddleVel;
+
+            // componente vertical conservando energia (restituição)
             double vyMag = Math.Sqrt(Math.Max(0, speed * speed - vx * vx));
-            vy = -vyMag;
+            vy = -vyMag * restitution;
+
+            // reposiciona a bola no topo do paddle
+            ballY = paddleY - ballR * 2;
 
             score++;
         }
